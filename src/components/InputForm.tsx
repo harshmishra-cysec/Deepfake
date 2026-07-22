@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { CandidateInput } from "../types";
 import { ResumeUploader } from "./ResumeUploader";
-import { User, FileText, MessageSquareQuote, Search, RotateCcw, Loader2, Sparkles, AlertCircle, FileCheck, AlertTriangle } from "lucide-react";
+import { TranscriptUploader } from "./TranscriptUploader";
+import { User, FileText, MessageSquareQuote, Search, RotateCcw, Loader2, Sparkles, AlertCircle, FileCheck, AlertTriangle, CheckSquare } from "lucide-react";
 
 interface InputFormProps {
   initialValues: CandidateInput;
@@ -9,6 +10,13 @@ interface InputFormProps {
   isLoading: boolean;
   onClear: () => void;
 }
+
+const AVAILABLE_FLAGS = [
+  { id: "Lip Sync Mismatch", label: "Lip Sync Mismatch", desc: "Audio/video appeared out of sync" },
+  { id: "Eye Contact Mismatch", label: "Eye Contact Mismatch", desc: "Unnatural or evasive eye movement (e.g. reading off-screen)" },
+  { id: "External Assistance", label: "External Assistance", desc: "Suspected help from another person or device off-camera" },
+  { id: "Scripted Responses", label: "Scripted Responses", desc: "Answers sounded rehearsed or unnaturally rehearsed" },
+];
 
 export const InputForm: React.FC<InputFormProps> = ({
   initialValues,
@@ -19,21 +27,37 @@ export const InputForm: React.FC<InputFormProps> = ({
   const [candidateName, setCandidateName] = useState(initialValues.candidateName);
   const [resumeSkills, setResumeSkills] = useState(initialValues.resumeSkills);
   const [interviewAnswer, setInterviewAnswer] = useState(initialValues.interviewAnswer);
+  const [recruiterFlags, setRecruiterFlags] = useState<string[]>(initialValues.recruiterFlags || []);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [extractionSuccessMsg, setExtractionSuccessMsg] = useState<string | null>(null);
+  const [transcriptSuccessMsg, setTranscriptSuccessMsg] = useState<string | null>(null);
 
   // Sync internal state if props change (e.g. clicking a Sample profile)
   useEffect(() => {
     setCandidateName(initialValues.candidateName);
     setResumeSkills(initialValues.resumeSkills);
     setInterviewAnswer(initialValues.interviewAnswer);
+    setRecruiterFlags(initialValues.recruiterFlags || []);
     setValidationError(null);
     setExtractionSuccessMsg(null);
+    setTranscriptSuccessMsg(null);
   }, [initialValues]);
+
+  const toggleFlag = (flagId: string) => {
+    setRecruiterFlags((prev) =>
+      prev.includes(flagId) ? prev.filter((f) => f !== flagId) : [...prev, flagId]
+    );
+  };
 
   const handleResumeExtracted = (extractedText: string, fileName: string) => {
     setResumeSkills(extractedText);
     setExtractionSuccessMsg(`Successfully extracted skills from "${fileName}". Review or edit below.`);
+    setValidationError(null);
+  };
+
+  const handleTranscriptExtracted = (extractedText: string, fileName: string) => {
+    setInterviewAnswer(extractedText);
+    setTranscriptSuccessMsg(`Successfully extracted transcript from "${fileName}". Review or edit below.`);
     setValidationError(null);
   };
 
@@ -48,6 +72,8 @@ export const InputForm: React.FC<InputFormProps> = ({
       candidateName: candidateName.trim() || "Unspecified Candidate",
       resumeSkills: resumeSkills.trim(),
       interviewAnswer: interviewAnswer.trim(),
+      recruiterFlags,
+      recruiter_flags: recruiterFlags,
     });
   };
 
@@ -55,7 +81,10 @@ export const InputForm: React.FC<InputFormProps> = ({
     setCandidateName("");
     setResumeSkills("");
     setInterviewAnswer("");
+    setRecruiterFlags([]);
     setValidationError(null);
+    setExtractionSuccessMsg(null);
+    setTranscriptSuccessMsg(null);
     onClear();
   };
 
@@ -152,7 +181,7 @@ export const InputForm: React.FC<InputFormProps> = ({
           />
         </div>
 
-        {/* Interview Answer Text Area */}
+        {/* Interview Answer Section (Upload File OR Type Manually) */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
@@ -163,14 +192,69 @@ export const InputForm: React.FC<InputFormProps> = ({
               {interviewAnswer.length} chars
             </span>
           </div>
+
+          {/* Option 1: File Upload (Drag and Drop / File Picker) */}
+          <TranscriptUploader
+            onExtractSuccess={handleTranscriptExtracted}
+            disabled={isLoading}
+          />
+
+          {transcriptSuccessMsg && (
+            <div className="mb-3 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+              <FileCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{transcriptSuccessMsg}</span>
+            </div>
+          )}
+
+          {/* Option 2: Manual Text Area Input */}
           <textarea
             id="interview-answer-input"
             rows={4}
             value={interviewAnswer}
             onChange={(e) => setInterviewAnswer(e.target.value)}
-            placeholder="Paste the candidate's interview response here..."
+            placeholder="Paste or edit the candidate's verbatim interview response..."
             className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 text-slate-900 text-sm placeholder:text-slate-400 transition-all outline-none leading-relaxed resize-y"
           />
+        </div>
+
+        {/* Recruiter-Observed Flags Section */}
+        <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-4 sm:p-5 space-y-3">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+              <CheckSquare className="w-4 h-4 text-indigo-600" />
+              Recruiter-Observed Flags (optional)
+            </label>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Check any behaviors you personally noticed during the live interview
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+            {AVAILABLE_FLAGS.map((flag) => {
+              const isChecked = recruiterFlags.includes(flag.id);
+              return (
+                <label
+                  key={flag.id}
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all select-none ${
+                    isChecked
+                      ? "bg-indigo-50/90 border-indigo-300 text-indigo-950 shadow-2xs"
+                      : "bg-white border-slate-200/80 hover:border-slate-300 text-slate-700"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => toggleFlag(flag.id)}
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 accent-indigo-600 cursor-pointer shrink-0"
+                  />
+                  <div className="text-xs leading-tight">
+                    <span className="font-bold block text-slate-800">{flag.label}</span>
+                    <span className="text-[11px] text-slate-500 block mt-0.5">{flag.desc}</span>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
         </div>
 
         {/* Persistent Advisory Disclaimer Strip */}

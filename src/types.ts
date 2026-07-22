@@ -14,6 +14,8 @@ export interface CandidateInput {
   candidateName: string;
   resumeSkills: string;
   interviewAnswer: string;
+  recruiterFlags?: string[];
+  recruiter_flags?: string[];
 }
 
 export interface AnalysisResult {

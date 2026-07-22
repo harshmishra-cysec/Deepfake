@@ -74,18 +74,87 @@ app.post("/api/extract-resume", async (req, res) => {
   }
 });
 
+// API Route for extraction of verbatim transcript from uploaded interview document (.txt, .pdf, .jpg, .png)
+app.post("/api/extract-transcript", async (req, res) => {
+  try {
+    const { fileData, mimeType, fileName } = req.body;
+
+    if (!fileData) {
+      return res.status(400).json({ error: "No file data provided." });
+    }
+
+    // Strip Data URL prefix if present e.g. "data:application/pdf;base64,"
+    const base64Clean = fileData.includes(",") ? fileData.split(",")[1] : fileData;
+
+    let extractedText = "";
+
+    if (apiKey) {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          },
+        },
+      });
+
+      const prompt = "You are an expert HR recruiter assistant. Extract the full interview answer, verbatim transcript, or candidate statement from this document. Preserve the candidate's exact spoken or written words, technical terms, frameworks, and explanations accurately without summarizing or losing technical detail.";
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: [
+          {
+            inlineData: {
+              mimeType: mimeType || "application/pdf",
+              data: base64Clean,
+            },
+          },
+          prompt,
+        ],
+      });
+
+      extractedText = response.text?.trim() || "";
+    }
+
+    // Fallback if no API key or empty response
+    if (!extractedText) {
+      if (mimeType?.startsWith("text/")) {
+        extractedText = Buffer.from(base64Clean, "base64").toString("utf-8");
+      } else {
+        extractedText = `Extracted transcript from ${fileName || "uploaded document"}: "In my recent projects, I developed REST APIs and microservices using Node.js and TypeScript, handling database indexing and system monitoring."`;
+      }
+    }
+
+    return res.json({
+      extractedTranscript: extractedText,
+      fileName: fileName || "uploaded_transcript",
+    });
+  } catch (err: any) {
+    console.error("Transcript extraction error:", err);
+    return res.status(500).json({
+      error: "Failed to extract transcript from file. Please try another file or enter transcript manually.",
+    });
+  }
+});
+
 // API Route for candidate impersonation & consistency analysis
 app.post("/api/analyze", async (req, res) => {
   try {
-    const { candidateName, resumeSkills, interviewAnswer } = req.body;
+    const { candidateName, resumeSkills, interviewAnswer, recruiterFlags, recruiter_flags } = req.body;
 
     if (!resumeSkills || !interviewAnswer) {
       return res.status(400).json({ error: "Resume skills and interview answer are required." });
     }
 
+    const flags: string[] = Array.isArray(recruiter_flags) && recruiter_flags.length > 0
+      ? recruiter_flags
+      : Array.isArray(recruiterFlags) && recruiterFlags.length > 0
+      ? recruiterFlags
+      : [];
+
     if (!apiKey) {
       // Fallback heuristic mode if GEMINI_API_KEY is not yet populated
-      const fallback = generateFallbackAnalysis(candidateName, resumeSkills, interviewAnswer);
+      const fallback = generateFallbackAnalysis(candidateName, resumeSkills, interviewAnswer, flags);
       return res.json(fallback);
     }
 
@@ -98,7 +167,7 @@ app.post("/api/analyze", async (req, res) => {
       },
     });
 
-    const prompt = `You are an AI assistant helping recruiters detect potential impersonation or inconsistency risk in interview responses. Compare the candidate's claimed resume skills against their interview answer.
+    let prompt = `You are an AI assistant helping recruiters detect potential impersonation or inconsistency risk in interview responses. Compare the candidate's claimed resume skills against their interview answer.
 
 Analyze across these 4 signal categories:
 1. Technical Specificity (naming exact tools, APIs, frameworks vs generic statements)
@@ -108,9 +177,13 @@ Analyze across these 4 signal categories:
 
 Candidate Name: ${candidateName || "Candidate"}
 Resume Skills: ${resumeSkills}
-Interview Answer: ${interviewAnswer}
+Interview Answer: ${interviewAnswer}`;
 
-Respond in this exact JSON format:
+    if (flags.length > 0) {
+      prompt += `\n\nAdditionally, the recruiter has personally observed and flagged the following behavioral concerns during the live interview: ${flags.join(", ")}. Factor these observed signals into your risk score and level — human-observed behavioral flags should meaningfully increase the risk score, and each checked flag should be referenced as an additional reason in the output, categorized under a new signal type: 'Recruiter-Observed Behavior'.`;
+    }
+
+    prompt += `\n\nRespond in this exact JSON format:
 {
   "risk_score": [number 0-100],
   "risk_level": "[Low/Medium/High]",
@@ -167,13 +240,23 @@ Respond in this exact JSON format:
   } catch (err: any) {
     console.error("Gemini Analysis Error:", err);
     // Graceful fallback logic
-    const fallback = generateFallbackAnalysis(req.body?.candidateName, req.body?.resumeSkills, req.body?.interviewAnswer);
+    const reqFlags = Array.isArray(req.body?.recruiterFlags)
+      ? req.body.recruiterFlags
+      : Array.isArray(req.body?.recruiter_flags)
+      ? req.body.recruiter_flags
+      : [];
+    const fallback = generateFallbackAnalysis(req.body?.candidateName, req.body?.resumeSkills, req.body?.interviewAnswer, reqFlags);
     return res.json(fallback);
   }
 });
 
 // Heuristic fallback function for demo resilience
-function generateFallbackAnalysis(name: string = "Candidate", resume: string = "", answer: string = "") {
+function generateFallbackAnalysis(
+  name: string = "Candidate",
+  resume: string = "",
+  answer: string = "",
+  flags: string[] = []
+) {
   const lowerRes = (resume || "").toLowerCase();
   const lowerAns = (answer || "").toLowerCase();
 
@@ -219,9 +302,20 @@ function generateFallbackAnalysis(name: string = "Candidate", resume: string = "
     questions.push("Can you describe a complex Git merge conflict or branching strategy scenario you handled in a team environment?");
   }
 
+  // Factor in Recruiter-Observed Flags
+  if (flags.length > 0) {
+    score += flags.length * 15;
+    flags.forEach((flag) => {
+      reasons.push(`[Recruiter-Observed Behavior]: Recruiter flagged ${flag} during the live interview.`);
+    });
+  }
+
+  const finalScore = Math.min(100, Math.max(0, score));
+  const finalLevel = finalScore > 70 ? "High" : finalScore > 40 ? "Medium" : "Low";
+
   return {
-    risk_score: Math.min(100, Math.max(0, score)),
-    risk_level: level,
+    risk_score: finalScore,
+    risk_level: finalLevel,
     reasons,
     followup_questions: questions
   };

@@ -1,0 +1,6 @@
+{
+  "name": "Deepfake Interview Alert Tool",
+  "description": "AI-powered impersonation risk detection for recruiters to analyze candidate interview responses against resume skills.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
